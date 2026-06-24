@@ -1,8 +1,14 @@
 const PROJECT_ID = 'sbs-diet-app';
 const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 
+let _liveAppCheckToken: string | undefined;
+
+export function setAppCheckToken(token: string): void {
+  _liveAppCheckToken = token;
+}
+
 function appCheckHeaders(): Record<string, string> {
-  const token = process.env.FIREBASE_APP_CHECK_TOKEN;
+  const token = _liveAppCheckToken ?? process.env.FIREBASE_APP_CHECK_TOKEN;
   return token ? { 'X-Firebase-AppCheck': token } : {};
 }
 

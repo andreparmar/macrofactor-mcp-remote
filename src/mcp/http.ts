@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { MacroFactorClient } from '../lib/api/index.js';
+import { setAppCheckToken } from '../lib/api/firestore.js';
 import { createServer as createMcpServer } from './server.js';
 import {
   getOAuthMetadata,
@@ -139,6 +140,26 @@ async function main() {
         res.writeHead(405, { Allow: 'POST' }); res.end(); return;
       }
       await handleToken(req, res);
+      return;
+    }
+
+    // ─── Admin: update App Check token in-memory (no redeploy needed) ────────
+
+    if (pathname === '/admin/app-check-token' && req.method === 'POST') {
+      const auth = req.headers.authorization;
+      if (!auth || auth !== `Bearer ${adminPassword}`) {
+        sendJson(res, 401, { error: 'Unauthorized' });
+        return;
+      }
+      try {
+        const body = await readJsonBody(req) as { token?: string };
+        if (!body?.token) { sendJson(res, 400, { error: 'Missing token' }); return; }
+        setAppCheckToken(body.token);
+        console.log('App Check token updated via admin endpoint');
+        sendJson(res, 200, { ok: true });
+      } catch {
+        sendJson(res, 400, { error: 'Invalid JSON' });
+      }
       return;
     }
 
