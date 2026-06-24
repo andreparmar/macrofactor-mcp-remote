@@ -156,8 +156,9 @@ async function main() {
       try {
         const body = await readJsonBody(req) as { token?: string };
         if (!body?.token) { sendJson(res, 400, { error: 'Missing token' }); return; }
-        setAppCheckToken(body.token);
-        console.log('App Check token updated via admin endpoint');
+        const t = body.token.trim();
+        setAppCheckToken(t);
+        console.log(`App Check token updated: length=${t.length} start=${t.substring(0, 10)} end=${t.substring(t.length - 10)}`);
         sendJson(res, 200, { ok: true });
       } catch {
         sendJson(res, 400, { error: 'Invalid JSON' });
