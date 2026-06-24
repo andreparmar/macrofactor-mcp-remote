@@ -9,7 +9,8 @@
     "build": "tsup",
     "start": "node dist/mcp/http.js",
     "dev": "tsx src/mcp/http.ts",
-    "get-refresh-token": "tsx src/scripts/get-refresh-token.ts"
+    "get-refresh-token": "tsx src/scripts/get-refresh-token.ts",
+    "test-local": "tsx src/scripts/test-local.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.20.0",

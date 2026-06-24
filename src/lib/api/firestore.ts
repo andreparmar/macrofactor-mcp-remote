@@ -1,6 +1,11 @@
 const PROJECT_ID = 'sbs-diet-app';
 const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 
+function appCheckHeaders(): Record<string, string> {
+  const token = process.env.FIREBASE_APP_CHECK_TOKEN;
+  return token ? { 'X-Firebase-AppCheck': token } : {};
+}
+
 export interface FirestoreDocument {
   name?: string;
   fields?: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -14,7 +19,7 @@ export interface FirestoreDocument {
 
 export async function getDocument(path: string, idToken: string): Promise<FirestoreDocument> {
   const resp = await fetch(`${BASE_URL}/${path}`, {
-    headers: { Authorization: `Bearer ${idToken}` },
+    headers: { Authorization: `Bearer ${idToken}`, ...appCheckHeaders() },
   });
   if (resp.status === 404) return {};
   if (!resp.ok) {
@@ -36,7 +41,7 @@ export async function listDocuments(
     if (pageToken) params.set('pageToken', pageToken);
     const url = `${BASE_URL}/${collectionPath}?${params}`;
     const resp = await fetch(url, {
-      headers: { Authorization: `Bearer ${idToken}` },
+      headers: { Authorization: `Bearer ${idToken}`, ...appCheckHeaders() },
     });
     if (resp.status === 404) break;
     if (!resp.ok) {
@@ -63,6 +68,7 @@ export async function patchDocument(
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${idToken}`,
+      ...appCheckHeaders(),
     },
     body: JSON.stringify({ fields: toFirestoreFields(fields) }),
   });
@@ -75,7 +81,7 @@ export async function patchDocument(
 export async function deleteDocument(path: string, idToken: string): Promise<void> {
   const resp = await fetch(`${BASE_URL}/${path}`, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${idToken}` },
+    headers: { Authorization: `Bearer ${idToken}`, ...appCheckHeaders() },
   });
   if (resp.status === 404) return;
   if (!resp.ok) {
@@ -91,6 +97,7 @@ export async function removeFields(path: string, fieldPaths: string[], idToken: 
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${idToken}`,
+      ...appCheckHeaders(),
     },
     body: JSON.stringify({ fields: {} }),
   });
@@ -106,6 +113,7 @@ export async function listCollectionIds(parentPath: string | null, idToken: stri
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${idToken}`,
+      ...appCheckHeaders(),
     },
     body: JSON.stringify({}),
   });
@@ -221,6 +229,7 @@ export async function patchFoodDocument(
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${idToken}`,
+      ...appCheckHeaders(),
     },
     body: JSON.stringify({
       fields: {
@@ -257,6 +266,7 @@ export async function updateFoodEntryFields(
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${idToken}`,
+      ...appCheckHeaders(),
     },
     body: JSON.stringify({
       fields: {
