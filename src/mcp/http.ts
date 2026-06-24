@@ -153,16 +153,28 @@ async function main() {
         sendJson(res, 401, { error: 'Unauthorized' });
         return;
       }
-      try {
-        const body = await readJsonBody(req) as { token?: string };
-        if (!body?.token) { sendJson(res, 400, { error: 'Missing token' }); return; }
-        const t = body.token.trim();
-        setAppCheckToken(t);
-        console.log(`App Check token updated: length=${t.length} start=${t.substring(0, 10)} end=${t.substring(t.length - 10)}`);
-        sendJson(res, 200, { ok: true });
-      } catch {
-        sendJson(res, 400, { error: 'Invalid JSON' });
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of req) {
+        chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
       }
+      const rawBody = Buffer.concat(chunks).toString('utf8').trim();
+      // Accept either {"token":"..."} JSON or plain-text token (from iOS Shortcut raw body)
+      let t = '';
+      if (rawBody.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(rawBody) as { token?: string };
+          t = (parsed.token ?? '').trim();
+        } catch {
+          sendJson(res, 400, { error: 'Invalid JSON' });
+          return;
+        }
+      } else {
+        t = rawBody.replace(/\s/g, ''); // strip any whitespace/newlines
+      }
+      if (!t) { sendJson(res, 400, { error: 'Missing token' }); return; }
+      setAppCheckToken(t);
+      console.log(`App Check token updated: length=${t.length} start=${t.substring(0, 10)} end=${t.substring(t.length - 10)}`);
+      sendJson(res, 200, { ok: true });
       return;
     }
 
