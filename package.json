@@ -1,0 +1,24 @@
+{
+  "name": "macrofactor-mcp-remote",
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "start": "node dist/mcp/http.js",
+    "dev": "tsx src/mcp/http.ts",
+    "get-refresh-token": "tsx src/scripts/get-refresh-token.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
