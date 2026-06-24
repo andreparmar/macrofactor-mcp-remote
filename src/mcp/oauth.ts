@@ -1,4 +1,4 @@
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID, createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 type RegisteredClient = {
@@ -15,16 +15,35 @@ type PendingCode = {
   expiresAt: number;
 };
 
-type StoredToken = {
-  expiresAt: number;
-};
-
 const clients = new Map<string, RegisteredClient>();
 const codes = new Map<string, PendingCode>();
-const tokens = new Map<string, StoredToken>();
 
 const CODE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const TOKEN_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
+const TOKEN_TTL_MS = 365 * 24 * 60 * 60 * 1000; // 1 year — tokens are HMAC-signed, no storage needed
+
+let _signingKey = '';
+
+export function initOAuth(adminPassword: string): void {
+  _signingKey = adminPassword;
+}
+
+function signToken(expiresAt: number): string {
+  const payload = String(expiresAt);
+  const sig = createHmac('sha256', _signingKey).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+function verifyToken(token: string): boolean {
+  const dot = token.lastIndexOf('.');
+  if (dot === -1) return false;
+  const payload = token.substring(0, dot);
+  const sig = Buffer.from(token.substring(dot + 1), 'base64url');
+  const expiresAt = Number(payload);
+  if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) return false;
+  const expected = Buffer.from(createHmac('sha256', _signingKey).update(payload).digest('base64url'), 'base64url');
+  if (sig.length !== expected.length) return false;
+  return timingSafeEqual(sig, expected);
+}
 
 export function getOAuthMetadata(baseUrl: string) {
   return {
@@ -50,14 +69,7 @@ export function getProtectedResourceMetadata(baseUrl: string) {
 
 export function validateBearerToken(authHeader: string | undefined): boolean {
   if (!authHeader?.startsWith('Bearer ')) return false;
-  const token = authHeader.substring(7);
-  const entry = tokens.get(token);
-  if (!entry) return false;
-  if (Date.now() > entry.expiresAt) {
-    tokens.delete(token);
-    return false;
-  }
-  return true;
+  return verifyToken(authHeader.substring(7));
 }
 
 function verifyPkce(codeVerifier: string, codeChallenge: string, method: string): boolean {
@@ -277,8 +289,7 @@ export async function handleToken(req: IncomingMessage, res: ServerResponse): Pr
     return;
   }
 
-  const accessToken = randomUUID();
-  tokens.set(accessToken, { expiresAt: Date.now() + TOKEN_TTL_MS });
+  const accessToken = signToken(Date.now() + TOKEN_TTL_MS);
 
   sendJson(res, 200, {
     access_token: accessToken,

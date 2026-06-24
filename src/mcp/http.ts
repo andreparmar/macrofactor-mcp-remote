@@ -6,6 +6,7 @@ import { MacroFactorClient } from '../lib/api/index.js';
 import { setAppCheckToken } from '../lib/api/firestore.js';
 import { createServer as createMcpServer } from './server.js';
 import {
+  initOAuth,
   getOAuthMetadata,
   getProtectedResourceMetadata,
   validateBearerToken,
@@ -77,6 +78,7 @@ async function main() {
     console.warn('BASE_URL not set — OAuth discovery will use request Host header (fine for Railway)');
   }
 
+  initOAuth(adminPassword);
   console.log('Authenticating with MacroFactor via refresh token...');
   const client = await MacroFactorClient.fromRefreshToken(refreshToken);
   console.log('MacroFactor client ready.');
