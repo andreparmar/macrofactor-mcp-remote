@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { MacroFactorClient } from '../lib/api/index.js';
 import { setAppCheckToken } from '../lib/api/firestore.js';
+import { startAppCheckRefresher } from '../lib/api/appcheck.js';
 import { createServer as createMcpServer } from './server.js';
 import {
   initOAuth,
@@ -79,6 +80,15 @@ async function main() {
   }
 
   initOAuth(adminPassword);
+
+  const deviceToken = process.env.APPCHECK_DEVICE_TOKEN;
+  const apiKey = process.env.FIREBASE_WEB_API_KEY;
+  if (deviceToken && apiKey) {
+    startAppCheckRefresher(deviceToken, apiKey);
+  } else {
+    console.warn('APPCHECK_DEVICE_TOKEN not set — App Check token must be pushed to /admin/app-check-token manually');
+  }
+
   console.log('Authenticating with MacroFactor via refresh token...');
   const client = await MacroFactorClient.fromRefreshToken(refreshToken);
   console.log('MacroFactor client ready.');
@@ -169,7 +179,8 @@ async function main() {
           return;
         }
       } else {
-        t = rawBody.replace(/\s/g, ''); // strip any whitespace/newlines
+        // strip a pasted "X-Firebase-AppCheck:" header name, then any whitespace/newlines
+        t = rawBody.replace(/^x-firebase-appcheck\s*:/i, '').replace(/\s/g, '');
       }
       if (!t) { sendJson(res, 400, { error: 'Missing token' }); return; }
       setAppCheckToken(t);
