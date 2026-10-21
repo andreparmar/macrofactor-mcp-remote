@@ -5,6 +5,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { MacroFactorClient } from '../lib/api/index.js';
 import { setAppCheckToken } from '../lib/api/firestore.js';
 import { startAppCheckRefresher } from '../lib/api/appcheck.js';
+import { notify } from '../lib/notify.js';
 import { createServer as createMcpServer } from './server.js';
 import {
   initOAuth,
@@ -185,6 +186,7 @@ async function main() {
       if (!t) { sendJson(res, 400, { error: 'Missing token' }); return; }
       setAppCheckToken(t);
       console.log(`App Check token updated: length=${t.length} start=${t.substring(0, 10)} end=${t.substring(t.length - 10)}`);
+      void notify('📲 App Check token pushed manually');
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -273,6 +275,7 @@ async function main() {
     console.log(`MCP server listening on port ${port}`);
     console.log(`  MCP endpoint:    ${resolvedBaseUrl || `http://localhost:${port}`}${MCP_PATH}`);
     console.log(`  OAuth discovery: ${resolvedBaseUrl || `http://localhost:${port}`}/.well-known/oauth-authorization-server`);
+    void notify('🟢 MacroFactor MCP server started');
   });
 
   // Compute resolvedBaseUrl for startup log outside the request handler

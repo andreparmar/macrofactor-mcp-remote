@@ -1,4 +1,5 @@
 import { setAppCheckToken } from './firestore';
+import { discordTime, notify } from '../notify';
 
 // MacroFactor's iOS App Check registration (from a WRAITH capture of the app's own exchange).
 const PROJECT_ID = 'sbs-diet-app';
@@ -14,6 +15,7 @@ const RETRY_MIN_MS = 60_000; // 1 min
 const RETRY_MAX_MS = 60 * 60_000; // 1 h
 
 let retryMs = RETRY_MIN_MS;
+let failures = 0; // consecutive failed exchanges
 
 /** Trade the captured DeviceCheck device_token for a fresh App Check token. */
 async function exchange(deviceToken: string, apiKey: string): Promise<{ token: string; ttlMs: number }> {
@@ -40,13 +42,26 @@ export function startAppCheckRefresher(deviceToken: string, apiKey: string): voi
     try {
       const { token, ttlMs } = await exchange(deviceToken, apiKey);
       setAppCheckToken(token);
-      retryMs = RETRY_MIN_MS;
       const next = ttlMs / 2;
       console.log(`App Check token refreshed (ttl ${Math.round(ttlMs / 3_600_000)}h) — next refresh in ${Math.round(next / 60_000)}m`);
+      void notify(
+        `${failures ? `✅ App Check refresh **recovered** after ${failures} failed attempts` : '✅ App Check token refreshed'}` +
+          ` — valid until ${discordTime(Date.now() + ttlMs)}, next refresh ${discordTime(Date.now() + next)}`,
+      );
+      retryMs = RETRY_MIN_MS;
+      failures = 0;
       setTimeout(run, next);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`⚠ App Check auto-refresh FAILED — ${message} — retrying in ${Math.round(retryMs / 60_000)}m. If this persists, re-capture APPCHECK_DEVICE_TOKEN with WRAITH.`);
+      failures++;
+      // Alert on the first failure and once more when backoff reaches its cap (~1h of failing), not every retry.
+      if (failures === 1 || (retryMs < RETRY_MAX_MS && retryMs * 2 >= RETRY_MAX_MS)) {
+        void notify(
+          `⚠️ **App Check auto-refresh failed** (attempt ${failures}) — ${message.replace(/\s+/g, ' ').slice(0, 200)}\n` +
+            `Retrying automatically. If this keeps failing, re-capture \`APPCHECK_DEVICE_TOKEN\` with WRAITH.`,
+        );
+      }
       setTimeout(run, retryMs);
       retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
     }
