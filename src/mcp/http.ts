@@ -5,7 +5,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { MacroFactorClient } from '../lib/api/index.js';
 import { setAppCheckToken } from '../lib/api/firestore.js';
 import { startAppCheckRefresher } from '../lib/api/appcheck.js';
-import { notify } from '../lib/notify.js';
+import { COLOR, discordTime, notify } from '../lib/notify.js';
 import { createServer as createMcpServer } from './server.js';
 import {
   initOAuth,
@@ -43,6 +43,16 @@ function sendJsonError(res: ServerResponse, statusCode: number, message: string)
     error: { code: -32000, message },
     id: null,
   });
+}
+
+/** Expiry of an App Check JWT as Discord time markup, or "unknown" if it can't be decoded. */
+function appCheckExpiry(token: string): string {
+  try {
+    const { exp } = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()) as { exp: number };
+    return discordTime(exp * 1000);
+  } catch {
+    return 'unknown';
+  }
 }
 
 function isInitializeRequest(body: unknown): boolean {
@@ -186,7 +196,11 @@ async function main() {
       if (!t) { sendJson(res, 400, { error: 'Missing token' }); return; }
       setAppCheckToken(t);
       console.log(`App Check token updated: length=${t.length} start=${t.substring(0, 10)} end=${t.substring(t.length - 10)}`);
-      void notify('📲 App Check token pushed manually');
+      void notify({
+        title: '📲 App Check token pushed manually',
+        color: COLOR.info,
+        fields: [{ name: 'Valid until', value: appCheckExpiry(t), inline: true }],
+      });
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -275,7 +289,14 @@ async function main() {
     console.log(`MCP server listening on port ${port}`);
     console.log(`  MCP endpoint:    ${resolvedBaseUrl || `http://localhost:${port}`}${MCP_PATH}`);
     console.log(`  OAuth discovery: ${resolvedBaseUrl || `http://localhost:${port}`}/.well-known/oauth-authorization-server`);
-    void notify('🟢 MacroFactor MCP server started');
+    void notify({
+      title: '🟢 MacroFactor MCP server started',
+      color: COLOR.ok,
+      fields: [
+        { name: 'App Check', value: deviceToken && apiKey ? 'Auto-refresh' : 'Manual push only', inline: true },
+        { name: 'Endpoint', value: `${resolvedBaseUrl}${MCP_PATH}` },
+      ],
+    });
   });
 
   // Compute resolvedBaseUrl for startup log outside the request handler

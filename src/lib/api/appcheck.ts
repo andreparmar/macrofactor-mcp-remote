@@ -1,5 +1,5 @@
 import { setAppCheckToken } from './firestore';
-import { discordTime, notify } from '../notify';
+import { COLOR, discordTime, notify } from '../notify';
 
 // MacroFactor's iOS App Check registration (from a WRAITH capture of the app's own exchange).
 const PROJECT_ID = 'sbs-diet-app';
@@ -44,10 +44,15 @@ export function startAppCheckRefresher(deviceToken: string, apiKey: string): voi
       setAppCheckToken(token);
       const next = ttlMs / 2;
       console.log(`App Check token refreshed (ttl ${Math.round(ttlMs / 3_600_000)}h) — next refresh in ${Math.round(next / 60_000)}m`);
-      void notify(
-        `${failures ? `✅ App Check refresh **recovered** after ${failures} failed attempts` : '✅ App Check token refreshed'}` +
-          ` — valid until ${discordTime(Date.now() + ttlMs)}, next refresh ${discordTime(Date.now() + next)}`,
-      );
+      void notify({
+        title: failures ? '✅ App Check refresh recovered' : '✅ App Check token refreshed',
+        color: COLOR.ok,
+        fields: [
+          { name: 'Valid until', value: discordTime(Date.now() + ttlMs), inline: true },
+          { name: 'Next refresh', value: discordTime(Date.now() + next, 'R'), inline: true },
+          ...(failures ? [{ name: 'Failed attempts before recovery', value: String(failures) }] : []),
+        ],
+      });
       retryMs = RETRY_MIN_MS;
       failures = 0;
       setTimeout(run, next);
@@ -57,10 +62,17 @@ export function startAppCheckRefresher(deviceToken: string, apiKey: string): voi
       failures++;
       // Alert on the first failure and once more when backoff reaches its cap (~1h of failing), not every retry.
       if (failures === 1 || (retryMs < RETRY_MAX_MS && retryMs * 2 >= RETRY_MAX_MS)) {
-        void notify(
-          `⚠️ **App Check auto-refresh failed** (attempt ${failures}) — ${message.replace(/\s+/g, ' ').slice(0, 200)}\n` +
-            `Retrying automatically. If this keeps failing, re-capture \`APPCHECK_DEVICE_TOKEN\` with WRAITH.`,
-        );
+        void notify({
+          title: failures === 1 ? '⚠️ App Check refresh failed' : '🚨 App Check refresh still failing',
+          color: failures === 1 ? COLOR.warn : COLOR.error,
+          description:
+            '```' + message.replace(/\s+/g, ' ').slice(0, 300) + '```\n' +
+            'Retrying automatically. If this keeps failing, re-capture `APPCHECK_DEVICE_TOKEN` with WRAITH.',
+          fields: [
+            { name: 'Attempt', value: String(failures), inline: true },
+            { name: 'Next retry', value: discordTime(Date.now() + retryMs, 'R'), inline: true },
+          ],
+        });
       }
       setTimeout(run, retryMs);
       retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
