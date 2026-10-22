@@ -4,7 +4,6 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { MacroFactorClient } from '../lib/api/index.js';
 import { setAppCheckToken } from '../lib/api/firestore.js';
-import { startAppCheckRefresher } from '../lib/api/appcheck.js';
 import { COLOR, discordTime, notify } from '../lib/notify.js';
 import { createServer as createMcpServer } from './server.js';
 import {
@@ -92,12 +91,12 @@ async function main() {
 
   initOAuth(adminPassword);
 
-  const deviceToken = process.env.APPCHECK_DEVICE_TOKEN;
-  const apiKey = process.env.FIREBASE_WEB_API_KEY;
-  if (deviceToken && apiKey) {
-    startAppCheckRefresher(deviceToken, apiKey);
-  } else {
-    console.warn('APPCHECK_DEVICE_TOKEN not set — App Check token must be pushed to /admin/app-check-token manually');
+  // App Check is NOT required for the MacroFactor read endpoints this server uses — verified: data reads
+  // succeed with the refresh token alone. The fragile DeviceCheck device-token auto-refresh (which expired
+  // every ~2 days and had to be re-captured) has been removed. An App Check header is sent only if a token
+  // is explicitly provided via FIREBASE_APP_CHECK_TOKEN or pushed to /admin/app-check-token; otherwise none.
+  if (process.env.FIREBASE_APP_CHECK_TOKEN) {
+    console.log('Static FIREBASE_APP_CHECK_TOKEN set — it will be attached to MacroFactor requests.');
   }
 
   console.log('Authenticating with MacroFactor via refresh token...');
@@ -293,7 +292,7 @@ async function main() {
       title: '🟢 MacroFactor MCP server started',
       color: COLOR.ok,
       fields: [
-        { name: 'App Check', value: deviceToken && apiKey ? 'Auto-refresh' : 'Manual push only', inline: true },
+        { name: 'App Check', value: process.env.FIREBASE_APP_CHECK_TOKEN ? 'Static token' : 'Off (not required)', inline: true },
         { name: 'Endpoint', value: `${resolvedBaseUrl}${MCP_PATH}` },
       ],
     });
