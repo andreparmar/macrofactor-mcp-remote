@@ -287,47 +287,138 @@ function parseTrainingProgramFromDocument(program: Record<string, unknown>): Tra
 // Client
 // ---------------------------------------------------------------------------
 
+/**
+ * Optional self-healing config for the client.
+ * - `onRefreshToken` is called whenever the Firebase refresh token rotates, so
+ *   the latest one can be persisted across restarts (Tier 1).
+ * - `email`/`password`, when present, let the client re-login to mint a brand-new
+ *   refresh token if the current one is ever revoked (Tier 2, truly zero-touch).
+ */
+export interface AuthConfig {
+  email?: string;
+  password?: string;
+  onRefreshToken?: (token: string) => void;
+}
+
 export class MacroFactorClient {
   private idToken: string;
   private refreshToken: string;
   private uid: string;
   private tokenExpiresAt: number;
+  private auth: AuthConfig;
+  private lastPersisted?: string;
 
-  private constructor(idToken: string, refreshToken: string, uid: string, tokenExpiresAt: number) {
+  private constructor(
+    idToken: string,
+    refreshToken: string,
+    uid: string,
+    tokenExpiresAt: number,
+    auth: AuthConfig = {}
+  ) {
     this.idToken = idToken;
     this.refreshToken = refreshToken;
     this.uid = uid;
     this.tokenExpiresAt = tokenExpiresAt;
+    this.auth = auth;
   }
 
   // -------------------------------------------------------------------------
   // Auth
   // -------------------------------------------------------------------------
 
-  static async login(email: string, password: string): Promise<MacroFactorClient> {
+  static async login(email: string, password: string, auth: AuthConfig = {}): Promise<MacroFactorClient> {
     const res = await signIn(email, password);
-    return new MacroFactorClient(res.idToken, res.refreshToken, res.uid, Date.now() + res.expiresIn * 1000);
+    const client = new MacroFactorClient(res.idToken, res.refreshToken, res.uid, Date.now() + res.expiresIn * 1000, auth);
+    client.persistToken();
+    return client;
   }
 
   /** Restore a session from a stored refresh token. */
-  static async fromRefreshToken(storedRefreshToken: string): Promise<MacroFactorClient> {
+  static async fromRefreshToken(storedRefreshToken: string, auth: AuthConfig = {}): Promise<MacroFactorClient> {
     const res = await refreshIdToken(storedRefreshToken);
     const uid = getUserIdFromToken(res.idToken);
-    return new MacroFactorClient(res.idToken, res.refreshToken, uid, Date.now() + res.expiresIn * 1000);
+    const client = new MacroFactorClient(res.idToken, res.refreshToken, uid, Date.now() + res.expiresIn * 1000, auth);
+    client.persistToken();
+    return client;
+  }
+
+  /**
+   * Self-healing boot: try the persisted token, then the env token, then (if
+   * credentials are configured) a fresh login. Whichever path works has its
+   * refresh token persisted via `auth.onRefreshToken`.
+   */
+  static async bootstrap(opts: {
+    storedToken?: string;
+    envToken?: string;
+    auth?: AuthConfig;
+  }): Promise<MacroFactorClient> {
+    const auth = opts.auth ?? {};
+    const candidates: { label: string; token: string }[] = [];
+    if (opts.storedToken) candidates.push({ label: 'persisted', token: opts.storedToken });
+    if (opts.envToken && opts.envToken !== opts.storedToken) candidates.push({ label: 'env', token: opts.envToken });
+
+    for (const c of candidates) {
+      try {
+        const client = await MacroFactorClient.fromRefreshToken(c.token, auth);
+        console.log(`Authenticated with MacroFactor (${c.label} refresh token).`);
+        return client;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`${c.label} refresh token rejected: ${msg}`);
+      }
+    }
+
+    if (auth.email && auth.password) {
+      console.log('Refresh token(s) unusable — logging in with stored credentials to mint a fresh one...');
+      const client = await MacroFactorClient.login(auth.email, auth.password, auth);
+      console.log('Authenticated with MacroFactor (fresh login).');
+      return client;
+    }
+
+    throw new Error(
+      'Could not authenticate with MacroFactor: no working refresh token, and no ' +
+        'MACROFACTOR_USERNAME/MACROFACTOR_PASSWORD set to log in with. Paste a fresh ' +
+        'FIREBASE_REFRESH_TOKEN (npm run get-refresh-token) or set credentials for auto re-login.'
+    );
   }
 
   getRefreshToken(): string {
     return this.refreshToken;
   }
 
+  /** Persist the refresh token if it changed since the last persist. */
+  private persistToken(): void {
+    if (this.auth.onRefreshToken && this.refreshToken && this.refreshToken !== this.lastPersisted) {
+      this.lastPersisted = this.refreshToken;
+      this.auth.onRefreshToken(this.refreshToken);
+    }
+  }
+
   /** Return a valid id token, refreshing automatically if within 60 s of expiry. */
   private async ensureToken(): Promise<string> {
     if (Date.now() < this.tokenExpiresAt - 60_000) return this.idToken;
-    const res = await refreshIdToken(this.refreshToken);
-    this.idToken = res.idToken;
-    this.refreshToken = res.refreshToken;
-    this.tokenExpiresAt = Date.now() + res.expiresIn * 1000;
-    return this.idToken;
+    try {
+      const res = await refreshIdToken(this.refreshToken);
+      this.idToken = res.idToken;
+      this.refreshToken = res.refreshToken;
+      this.tokenExpiresAt = Date.now() + res.expiresIn * 1000;
+      this.persistToken();
+      return this.idToken;
+    } catch (err) {
+      // Refresh token revoked/expired. If we have credentials, re-login to mint a new one.
+      if (this.auth.email && this.auth.password) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`Refresh token rejected during use (${msg}) — re-logging in with stored credentials...`);
+        const res = await signIn(this.auth.email, this.auth.password);
+        this.idToken = res.idToken;
+        this.refreshToken = res.refreshToken;
+        this.uid = res.uid;
+        this.tokenExpiresAt = Date.now() + res.expiresIn * 1000;
+        this.persistToken();
+        return this.idToken;
+      }
+      throw err;
+    }
   }
 
   // -------------------------------------------------------------------------

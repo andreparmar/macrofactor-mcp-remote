@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { MacroFactorClient } from '../lib/api/index.js';
+import { MacroFactorClient, RefreshTokenStore } from '../lib/api/index.js';
 import { setAppCheckToken } from '../lib/api/firestore.js';
 import { COLOR, discordTime, notify } from '../lib/notify.js';
 import { createServer as createMcpServer } from './server.js';
@@ -72,11 +72,18 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 async function main() {
   const refreshToken = process.env.FIREBASE_REFRESH_TOKEN;
   const adminPassword = process.env.OAUTH_ADMIN_PASSWORD;
+  const mfEmail = process.env.MACROFACTOR_USERNAME;
+  const mfPassword = process.env.MACROFACTOR_PASSWORD;
+  const tokenStorePath = process.env.REFRESH_TOKEN_STORE ?? '/data/mf-refresh-token';
   const port = Number(process.env.PORT ?? '3001');
   const baseUrl = getBaseUrl();
 
-  if (!refreshToken) {
-    console.error('FIREBASE_REFRESH_TOKEN is required. Run: npm run get-refresh-token');
+  const haveCredentials = Boolean(mfEmail && mfPassword);
+  if (!refreshToken && !haveCredentials) {
+    console.error(
+      'Need either FIREBASE_REFRESH_TOKEN (npm run get-refresh-token) or ' +
+        'MACROFACTOR_USERNAME + MACROFACTOR_PASSWORD for auto-login. Set in Railway env vars.'
+    );
     process.exit(1);
   }
 
@@ -99,8 +106,28 @@ async function main() {
     console.log('Static FIREBASE_APP_CHECK_TOKEN set — it will be attached to MacroFactor requests.');
   }
 
-  console.log('Authenticating with MacroFactor via refresh token...');
-  const client = await MacroFactorClient.fromRefreshToken(refreshToken);
+  // Self-healing auth:
+  //  Tier 1 — the Firebase refresh token rotates on every hourly refresh; we persist the latest to a
+  //           Railway Volume (REFRESH_TOKEN_STORE) and prefer it over the env var on boot, so a rotated
+  //           token survives container restarts (the real reason it used to "go stale" every few weeks).
+  //  Tier 2 — if a token is ever fully revoked, re-login with MACROFACTOR_USERNAME/MACROFACTOR_PASSWORD
+  //           to mint a brand-new one. Fully zero-touch.
+  const tokenStore = new RefreshTokenStore(tokenStorePath);
+  const storedToken = tokenStore.load();
+  console.log(
+    `Authenticating with MacroFactor ` +
+      `(persisted token: ${storedToken ? 'yes' : 'no'}, env token: ${refreshToken ? 'yes' : 'no'}, ` +
+      `auto-login: ${haveCredentials ? 'on' : 'off'})...`
+  );
+  const client = await MacroFactorClient.bootstrap({
+    storedToken,
+    envToken: refreshToken,
+    auth: {
+      email: mfEmail,
+      password: mfPassword,
+      onRefreshToken: (t) => tokenStore.save(t),
+    },
+  });
   console.log('MacroFactor client ready.');
 
   const transports = new Map<string, StreamableHTTPServerTransport>();
@@ -293,6 +320,7 @@ async function main() {
       color: COLOR.ok,
       fields: [
         { name: 'App Check', value: process.env.FIREBASE_APP_CHECK_TOKEN ? 'Static token' : 'Off (not required)', inline: true },
+        { name: 'Auto-login', value: haveCredentials ? 'On (self-healing)' : 'Off (token only)', inline: true },
         { name: 'Endpoint', value: `${resolvedBaseUrl}${MCP_PATH}` },
       ],
     });
