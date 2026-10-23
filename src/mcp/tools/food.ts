@@ -20,7 +20,13 @@ export function registerFoodTools(server: McpServer, client: MacroFactorClient):
     { readOnlyHint: true },
     async ({ date }) => {
       const entries = await client.getFoodLog(date ?? todayDate());
-      const active = entries.filter((entry) => !entry.deleted);
+      const active = entries
+        .filter((entry) => !entry.deleted)
+        .map((entry) => {
+          // Drop the raw per-serving id map; expose named, consumed-amount nutrients instead.
+          const { nutrientsRaw: _raw, ...rest } = entry;
+          return { ...rest, nutrients: entry.nutrients() };
+        });
       return { content: [{ type: 'text' as const, text: JSON.stringify(active, null, 2) }] };
     }
   );

@@ -1,3 +1,5 @@
+import { namedNutrients, type NamedNutrient } from './nutrients';
+
 export interface ScaleEntry {
   date: string;
   weight: number;
@@ -58,6 +60,8 @@ export class FoodEntry {
   foodId?: string;
   deleted?: boolean;
   imageId?: string;
+  /** Per-serving micronutrients keyed by USDA nutrient id (e.g. "291" fiber, "303" iron). */
+  nutrientsRaw?: Record<string, number>;
 
   constructor(data: {
     date: string;
@@ -79,6 +83,7 @@ export class FoodEntry {
     foodId?: string;
     deleted?: boolean;
     imageId?: string;
+    nutrientsRaw?: Record<string, number>;
   }) {
     this.date = data.date;
     this.entryId = data.entryId;
@@ -99,6 +104,7 @@ export class FoodEntry {
     this.foodId = data.foodId;
     this.deleted = data.deleted;
     this.imageId = data.imageId;
+    this.nutrientsRaw = data.nutrientsRaw;
   }
 
   /** (userQty * unitWeight) / servingGrams — defaults to 1 when data is missing */
@@ -128,6 +134,11 @@ export class FoodEntry {
 
   weightGrams(): number {
     return (this.servingGrams ?? 0) * this.multiplier();
+  }
+
+  /** Named micronutrients actually consumed in this entry (per-serving × multiplier). */
+  nutrients(): NamedNutrient[] {
+    return namedNutrients(this.nutrientsRaw, this.multiplier());
   }
 }
 

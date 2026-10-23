@@ -1,5 +1,6 @@
 import type { Goals, ScaleEntry, NutritionSummary, StepEntry, SearchFoodResult, FoodServing } from './types';
 import { FoodEntry } from './types';
+import { collectNutrientFields, type NamedNutrient } from './nutrients';
 import { signIn, refreshIdToken, getUserIdFromToken } from './auth';
 import {
   type FoodFieldValue,
@@ -583,11 +584,57 @@ export class MacroFactorClient {
           foodId: val.id as string | undefined,
           deleted: val.d === true,
           imageId: val.x as string | undefined,
+          nutrientsRaw: collectNutrientFields(val as Record<string, unknown>),
         })
       );
     }
 
     return entries;
+  }
+
+  /**
+   * Sum a day's logged micronutrients (and macros) across all non-deleted entries.
+   * Coverage depends on each food's source: USDA foods carry a full profile, branded/
+   * custom foods often only macros — this reflects whatever MacroFactor actually stored.
+   */
+  async getMicronutrientTotals(date: string): Promise<{
+    date: string;
+    calories: number;
+    protein: number;
+    carbs: number;
+    fat: number;
+    micronutrients: NamedNutrient[];
+    entryCount: number;
+  }> {
+    const entries = (await this.getFoodLog(date)).filter((e) => !e.deleted);
+    let calories = 0;
+    let protein = 0;
+    let carbs = 0;
+    let fat = 0;
+    const totals = new Map<string, { amount: number; unit: string }>();
+    for (const e of entries) {
+      calories += e.calories();
+      protein += e.protein();
+      carbs += e.carbs();
+      fat += e.fat();
+      for (const n of e.nutrients()) {
+        const cur = totals.get(n.name);
+        if (cur) cur.amount += n.amount;
+        else totals.set(n.name, { amount: n.amount, unit: n.unit });
+      }
+    }
+    const round = (n: number) => Math.round(n * 100) / 100;
+    return {
+      date,
+      calories: round(calories),
+      protein: round(protein),
+      carbs: round(carbs),
+      fat: round(fat),
+      micronutrients: [...totals.entries()]
+        .map(([name, v]) => ({ name, amount: round(v.amount), unit: v.unit }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      entryCount: entries.length,
+    };
   }
 
   async logFood(
