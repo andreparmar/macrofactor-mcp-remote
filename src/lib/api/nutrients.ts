@@ -81,3 +81,49 @@ export function namedNutrients(
 function round(n: number): number {
   return Math.round(n * 1000) / 1000;
 }
+
+// General Dietary Reference Intakes (adult 19–50). MacroFactor sets NO micronutrient goals, so these are
+// standard NIH/FDA references — a sanity gauge, not personalized medical targets. type 'min' = aim to reach;
+// 'limit' = try to stay under. Values differ by sex where the DRI does.
+interface RefTarget { male: number; female: number; unit: string; type: 'min' | 'limit' }
+export const REFERENCE_TARGETS: Record<string, RefTarget> = {
+  fiber: { male: 38, female: 25, unit: 'g', type: 'min' },
+  sugar: { male: 50, female: 50, unit: 'g', type: 'limit' }, // FDA DV, total; added-sugar guidance is lower
+  saturatedFat: { male: 20, female: 20, unit: 'g', type: 'limit' },
+  transFat: { male: 2, female: 2, unit: 'g', type: 'limit' },
+  cholesterol: { male: 300, female: 300, unit: 'mg', type: 'limit' },
+  sodium: { male: 2300, female: 2300, unit: 'mg', type: 'limit' },
+  potassium: { male: 3400, female: 2600, unit: 'mg', type: 'min' },
+  calcium: { male: 1000, female: 1000, unit: 'mg', type: 'min' },
+  iron: { male: 8, female: 18, unit: 'mg', type: 'min' },
+  magnesium: { male: 400, female: 310, unit: 'mg', type: 'min' },
+  phosphorus: { male: 700, female: 700, unit: 'mg', type: 'min' },
+  zinc: { male: 11, female: 8, unit: 'mg', type: 'min' },
+  copper: { male: 0.9, female: 0.9, unit: 'mg', type: 'min' },
+  manganese: { male: 2.3, female: 1.8, unit: 'mg', type: 'min' },
+  selenium: { male: 55, female: 55, unit: 'mcg', type: 'min' },
+  vitaminA_RAE: { male: 900, female: 700, unit: 'mcg', type: 'min' },
+  vitaminC: { male: 90, female: 75, unit: 'mg', type: 'min' },
+  vitaminD: { male: 15, female: 15, unit: 'mcg', type: 'min' },
+  vitaminE: { male: 15, female: 15, unit: 'mg', type: 'min' },
+  vitaminK: { male: 120, female: 90, unit: 'mcg', type: 'min' },
+  thiamin_B1: { male: 1.2, female: 1.1, unit: 'mg', type: 'min' },
+  riboflavin_B2: { male: 1.3, female: 1.1, unit: 'mg', type: 'min' },
+  niacin_B3: { male: 16, female: 14, unit: 'mg', type: 'min' },
+  pantothenicAcid_B5: { male: 5, female: 5, unit: 'mg', type: 'min' },
+  vitaminB6: { male: 1.3, female: 1.3, unit: 'mg', type: 'min' },
+  folate: { male: 400, female: 400, unit: 'mcg', type: 'min' },
+  vitaminB12: { male: 2.4, female: 2.4, unit: 'mcg', type: 'min' },
+  choline: { male: 550, female: 425, unit: 'mg', type: 'min' },
+};
+
+/** DRI target for a nutrient given sex ('M'/'F' etc.), or undefined if none is defined. */
+export function targetFor(
+  name: string,
+  sex: string | undefined
+): { target: number; targetType: 'min' | 'limit' } | undefined {
+  const t = REFERENCE_TARGETS[name];
+  if (!t) return undefined;
+  const female = (sex ?? '').toUpperCase().startsWith('F');
+  return { target: female ? t.female : t.male, targetType: t.type };
+}

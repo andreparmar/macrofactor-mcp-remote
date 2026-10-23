@@ -156,6 +156,17 @@ export interface Goals {
   tdee?: number;
   programStyle?: string;
   programType?: string;
+  /** Full nutrition-program settings from the planner (MacroFactor has no micronutrient goals). */
+  proteinPerKg?: number;
+  carbPercent?: number;
+  proteinPreference?: string;
+  calorieFloor?: string;
+  calorieShift?: boolean;
+  tdeeMode?: string;
+  trainingType?: string;
+  dailyAverageCalories?: number;
+  programWeightKg?: number;
+  lastTdeeUpdate?: string;
 }
 
 export interface UserProfile {

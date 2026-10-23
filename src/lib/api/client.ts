@@ -1,6 +1,6 @@
 import type { Goals, ScaleEntry, NutritionSummary, StepEntry, SearchFoodResult, FoodServing } from './types';
 import { FoodEntry } from './types';
-import { collectNutrientFields, type NamedNutrient } from './nutrients';
+import { collectNutrientFields, targetFor, type NamedNutrient } from './nutrients';
 import { signIn, refreshIdToken, getUserIdFromToken } from './auth';
 import {
   type FoodFieldValue,
@@ -463,14 +463,28 @@ export class MacroFactorClient {
   async getGoals(): Promise<Goals> {
     const profile = await this.getProfile();
     const planner = (profile.planner ?? {}) as Record<string, unknown>;
+    const days = (planner.days ?? {}) as Record<string, { proteinPerKg?: number; percentCarbs?: number }>;
+    const day = Object.values(days)[0];
+    const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+    const num = (v: unknown) => (v != null && v !== '' ? Number(v) : undefined);
     return {
       calories: toNumberArray(planner.calories ?? []),
       protein: toNumberArray(planner.protein ?? []),
       carbs: toNumberArray(planner.carbs ?? []),
       fat: toNumberArray(planner.fat ?? []),
-      tdee: planner.tdeeValue != null ? Number(planner.tdeeValue) : undefined,
-      programStyle: typeof planner.programStyle === 'string' ? planner.programStyle : undefined,
-      programType: typeof planner.programType === 'string' ? planner.programType : undefined,
+      tdee: num(planner.tdeeValue),
+      programStyle: str(planner.programStyle),
+      programType: str(planner.programType),
+      proteinPerKg: day?.proteinPerKg != null ? Number(day.proteinPerKg) : undefined,
+      carbPercent: day?.percentCarbs != null ? Number(day.percentCarbs) : undefined,
+      proteinPreference: str(planner.proteinPreference),
+      calorieFloor: str(planner.calorieFloor),
+      calorieShift: typeof planner.calorieShift === 'boolean' ? planner.calorieShift : undefined,
+      tdeeMode: str(planner.tdeeMode),
+      trainingType: str(planner.trainingType),
+      dailyAverageCalories: num(planner.dailyAverage),
+      programWeightKg: num(planner.weight),
+      lastTdeeUpdate: str(planner.timeOfLastTdeeUpdate),
     };
   }
 
@@ -603,10 +617,19 @@ export class MacroFactorClient {
     protein: number;
     carbs: number;
     fat: number;
-    micronutrients: NamedNutrient[];
+    micronutrients: (NamedNutrient & {
+      target?: number;
+      targetType?: 'min' | 'limit';
+      percentOfTarget?: number;
+    })[];
     entryCount: number;
+    targetsNote: string;
   }> {
-    const entries = (await this.getFoodLog(date)).filter((e) => !e.deleted);
+    const [entries, profile] = await Promise.all([
+      this.getFoodLog(date).then((es) => es.filter((e) => !e.deleted)),
+      this.getProfile().catch(() => ({}) as Record<string, unknown>),
+    ]);
+    const sex = (profile as { sex?: string }).sex;
     let calories = 0;
     let protein = 0;
     let carbs = 0;
@@ -631,9 +654,25 @@ export class MacroFactorClient {
       carbs: round(carbs),
       fat: round(fat),
       micronutrients: [...totals.entries()]
-        .map(([name, v]) => ({ name, amount: round(v.amount), unit: v.unit }))
+        .map(([name, v]) => {
+          const amount = round(v.amount);
+          const t = targetFor(name, sex);
+          if (!t) return { name, amount, unit: v.unit };
+          return {
+            name,
+            amount,
+            unit: v.unit,
+            target: t.target,
+            targetType: t.targetType,
+            percentOfTarget: t.target ? Math.round((amount / t.target) * 100) : undefined,
+          };
+        })
         .sort((a, b) => a.name.localeCompare(b.name)),
       entryCount: entries.length,
+      targetsNote:
+        'Targets are general NIH/FDA Dietary Reference Intakes for an adult' +
+        (sex ? ` (${sex})` : '') +
+        ", not MacroFactor goals (it sets none for micronutrients) or medical advice. type 'min' = aim to reach; 'limit' = stay under. Totals undercount nutrients that a logged food's source didn't report.",
     };
   }
 
