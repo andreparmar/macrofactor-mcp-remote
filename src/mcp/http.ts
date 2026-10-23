@@ -119,16 +119,69 @@ async function main() {
       `(persisted token: ${storedToken ? 'yes' : 'no'}, env token: ${refreshToken ? 'yes' : 'no'}, ` +
       `auto-login: ${haveCredentials ? 'on' : 'off'})...`
   );
-  const client = await MacroFactorClient.bootstrap({
+  const { client, via } = await MacroFactorClient.bootstrap({
     storedToken,
     envToken: refreshToken,
     auth: {
       email: mfEmail,
       password: mfPassword,
       onRefreshToken: (t) => tokenStore.save(t),
+      // Self-heal alert: fires when a dead refresh token is recovered via credential re-login.
+      onEvent: (e) => {
+        if (e.kind === 'relogin') {
+          void notify({
+            title: '🔁 MacroFactor self-healed (re-login)',
+            color: COLOR.warn,
+            description:
+              'The refresh token was rejected, so the server logged back in with stored credentials and minted a fresh one. No action needed.',
+            fields: [
+              { name: 'Trigger', value: (e.reason ?? 'unknown').slice(0, 300) },
+              { name: 'New token valid', value: e.expiresAt ? discordTime(e.expiresAt, 'R') : '—', inline: true },
+            ],
+          });
+        }
+      },
     },
   });
   console.log('MacroFactor client ready.');
+
+  const authLabel = via === 'login' ? 'Fresh login' : via === 'persisted' ? 'Persisted token' : 'Env token';
+
+  // Status heartbeat: every HEARTBEAT_HOURS, keep the token warm and post a health line to Discord so the
+  // webhook is an actual status feed (not just a one-time "started"). Reports token freshness; if a refresh
+  // fails it will trigger Tier 2 re-login (which posts its own alert) or surface an error here.
+  const HEARTBEAT_HOURS = Number(process.env.HEARTBEAT_HOURS ?? '12');
+  if (HEARTBEAT_HOURS > 0) {
+    const heartbeat = setInterval(
+      () => {
+        void (async () => {
+          try {
+            const expiry = await client.keepAlive();
+            void notify({
+              title: '💓 MacroFactor MCP — healthy',
+              color: COLOR.ok,
+              fields: [
+                { name: 'Token valid', value: discordTime(expiry, 'R'), inline: true },
+                { name: 'Auto-login', value: haveCredentials ? 'On' : 'Off', inline: true },
+              ],
+            });
+          } catch (err) {
+            void notify({
+              title: '🔴 MacroFactor MCP — token refresh FAILED',
+              color: COLOR.error,
+              description:
+                'Heartbeat could not refresh the session' +
+                (haveCredentials ? ' even after re-login.' : ' and no credentials are set for auto-login.') +
+                ' The MCP may be unable to read until this is fixed.',
+              fields: [{ name: 'Error', value: (err instanceof Error ? err.message : String(err)).slice(0, 500) }],
+            });
+          }
+        })();
+      },
+      HEARTBEAT_HOURS * 60 * 60 * 1000
+    );
+    heartbeat.unref();
+  }
 
   const transports = new Map<string, StreamableHTTPServerTransport>();
 
@@ -319,8 +372,10 @@ async function main() {
       title: '🟢 MacroFactor MCP server started',
       color: COLOR.ok,
       fields: [
-        { name: 'App Check', value: process.env.FIREBASE_APP_CHECK_TOKEN ? 'Static token' : 'Off (not required)', inline: true },
+        { name: 'Authed via', value: authLabel, inline: true },
         { name: 'Auto-login', value: haveCredentials ? 'On (self-healing)' : 'Off (token only)', inline: true },
+        { name: 'Token valid', value: discordTime(client.getTokenExpiry(), 'R'), inline: true },
+        { name: 'App Check', value: process.env.FIREBASE_APP_CHECK_TOKEN ? 'Static token' : 'Off (not required)', inline: true },
         { name: 'Endpoint', value: `${resolvedBaseUrl}${MCP_PATH}` },
       ],
     });
@@ -330,8 +385,14 @@ async function main() {
   const resolvedBaseUrl = baseUrl || `http://localhost:${port}`;
 }
 
-main().catch((err: unknown) => {
+main().catch(async (err: unknown) => {
   const message = err instanceof Error ? err.message : String(err);
   console.error('Fatal:', message);
+  await notify({
+    title: '🔴 MacroFactor MCP failed to start',
+    color: COLOR.error,
+    description: 'The server could not boot. Check the refresh token / credentials in Railway.',
+    fields: [{ name: 'Error', value: message.slice(0, 1000) }],
+  });
   process.exit(1);
 });

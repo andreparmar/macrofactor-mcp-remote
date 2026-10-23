@@ -294,10 +294,22 @@ function parseTrainingProgramFromDocument(program: Record<string, unknown>): Tra
  * - `email`/`password`, when present, let the client re-login to mint a brand-new
  *   refresh token if the current one is ever revoked (Tier 2, truly zero-touch).
  */
+/** How the client authenticated at boot. */
+export type AuthVia = 'persisted' | 'env' | 'login';
+
+/** A notable auth lifecycle event, surfaced for status reporting (e.g. Discord). */
+export interface AuthEvent {
+  /** 'relogin' = a dead refresh token was recovered via credential re-login (Tier 2). */
+  kind: 'relogin';
+  reason?: string;
+  expiresAt?: number;
+}
+
 export interface AuthConfig {
   email?: string;
   password?: string;
   onRefreshToken?: (token: string) => void;
+  onEvent?: (event: AuthEvent) => void;
 }
 
 export class MacroFactorClient {
@@ -351,9 +363,9 @@ export class MacroFactorClient {
     storedToken?: string;
     envToken?: string;
     auth?: AuthConfig;
-  }): Promise<MacroFactorClient> {
+  }): Promise<{ client: MacroFactorClient; via: AuthVia }> {
     const auth = opts.auth ?? {};
-    const candidates: { label: string; token: string }[] = [];
+    const candidates: { label: AuthVia; token: string }[] = [];
     if (opts.storedToken) candidates.push({ label: 'persisted', token: opts.storedToken });
     if (opts.envToken && opts.envToken !== opts.storedToken) candidates.push({ label: 'env', token: opts.envToken });
 
@@ -361,7 +373,7 @@ export class MacroFactorClient {
       try {
         const client = await MacroFactorClient.fromRefreshToken(c.token, auth);
         console.log(`Authenticated with MacroFactor (${c.label} refresh token).`);
-        return client;
+        return { client, via: c.label };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`${c.label} refresh token rejected: ${msg}`);
@@ -372,7 +384,7 @@ export class MacroFactorClient {
       console.log('Refresh token(s) unusable — logging in with stored credentials to mint a fresh one...');
       const client = await MacroFactorClient.login(auth.email, auth.password, auth);
       console.log('Authenticated with MacroFactor (fresh login).');
-      return client;
+      return { client, via: 'login' };
     }
 
     throw new Error(
@@ -384,6 +396,17 @@ export class MacroFactorClient {
 
   getRefreshToken(): string {
     return this.refreshToken;
+  }
+
+  /** Unix-ms expiry of the current Firebase ID token. */
+  getTokenExpiry(): number {
+    return this.tokenExpiresAt;
+  }
+
+  /** Force a token-freshness check (refreshing / re-logging in as needed) and return the new expiry. */
+  async keepAlive(): Promise<number> {
+    await this.ensureToken();
+    return this.tokenExpiresAt;
   }
 
   /** Persist the refresh token if it changed since the last persist. */
@@ -415,6 +438,7 @@ export class MacroFactorClient {
         this.uid = res.uid;
         this.tokenExpiresAt = Date.now() + res.expiresIn * 1000;
         this.persistToken();
+        this.auth.onEvent?.({ kind: 'relogin', reason: msg, expiresAt: this.tokenExpiresAt });
         return this.idToken;
       }
       throw err;

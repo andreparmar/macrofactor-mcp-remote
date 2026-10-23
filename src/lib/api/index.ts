@@ -1,4 +1,4 @@
-export { MacroFactorClient, type LogTime, type AuthConfig } from './client';
+export { MacroFactorClient, type LogTime, type AuthConfig, type AuthEvent, type AuthVia } from './client';
 export { RefreshTokenStore } from './token-store';
 export * from './types';
 export * from './workout-types';
