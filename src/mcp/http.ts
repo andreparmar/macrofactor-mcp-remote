@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { MacroFactorClient, RefreshTokenStore } from '../lib/api/index.js';
+import { startAppCheckRefresher } from '../lib/api/appcheck.js';
 import { setAppCheckToken } from '../lib/api/firestore.js';
 import { COLOR, discordTime, notify } from '../lib/notify.js';
 import { createServer as createMcpServer } from './server.js';
@@ -98,13 +99,31 @@ async function main() {
 
   initOAuth(adminPassword);
 
-  // App Check is NOT required for the MacroFactor read endpoints this server uses — verified: data reads
-  // succeed with the refresh token alone. The fragile DeviceCheck device-token auto-refresh (which expired
-  // every ~2 days and had to be re-captured) has been removed. An App Check header is sent only if a token
-  // is explicitly provided via FIREBASE_APP_CHECK_TOKEN or pushed to /admin/app-check-token; otherwise none.
-  if (process.env.FIREBASE_APP_CHECK_TOKEN) {
+  // App Check IS enforced by MacroFactor on the Firestore reads this server uses (verified 2026-10-22:
+  // users/{uid} and users/{uid}/food/* both 403 PERMISSION_DENIED with no App Check header). App Check =
+  // Apple DeviceCheck attestation, which a server cannot mint — so a device_token captured from the iOS app
+  // must be supplied. The refresher below trades that device_token for a fresh App Check token at startup and
+  // every ~half its TTL. The device_token itself expires (~2 days); when it does, exchange fails and a Discord
+  // alert fires asking for a new capture. Fallbacks if APPCHECK_DEVICE_TOKEN is unset: a static
+  // FIREBASE_APP_CHECK_TOKEN, or a token pushed to /admin/app-check-token.
+  const appCheckDeviceToken = process.env.APPCHECK_DEVICE_TOKEN;
+  const firebaseApiKey = process.env.FIREBASE_WEB_API_KEY;
+  if (appCheckDeviceToken && firebaseApiKey) {
+    startAppCheckRefresher(appCheckDeviceToken, firebaseApiKey);
+  } else if (process.env.FIREBASE_APP_CHECK_TOKEN) {
     console.log('Static FIREBASE_APP_CHECK_TOKEN set — it will be attached to MacroFactor requests.');
+  } else {
+    console.warn(
+      'No App Check source: set APPCHECK_DEVICE_TOKEN (+ FIREBASE_WEB_API_KEY) for auto-refresh, or push a ' +
+        'token to /admin/app-check-token. Firestore reads will 403 until one is provided.'
+    );
   }
+  const appCheckMode =
+    appCheckDeviceToken && firebaseApiKey
+      ? 'Device-token auto-refresh'
+      : process.env.FIREBASE_APP_CHECK_TOKEN
+        ? 'Static token'
+        : '⚠️ None (reads will 403)';
 
   // Self-healing auth:
   //  Tier 1 — the Firebase refresh token rotates on every hourly refresh; we persist the latest to a
@@ -375,7 +394,7 @@ async function main() {
         { name: 'Authed via', value: authLabel, inline: true },
         { name: 'Auto-login', value: haveCredentials ? 'On (self-healing)' : 'Off (token only)', inline: true },
         { name: 'Token valid', value: discordTime(client.getTokenExpiry(), 'R'), inline: true },
-        { name: 'App Check', value: process.env.FIREBASE_APP_CHECK_TOKEN ? 'Static token' : 'Off (not required)', inline: true },
+        { name: 'App Check', value: appCheckMode, inline: true },
         { name: 'Endpoint', value: `${resolvedBaseUrl}${MCP_PATH}` },
       ],
     });
