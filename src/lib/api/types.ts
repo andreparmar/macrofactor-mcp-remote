@@ -167,6 +167,22 @@ export interface Goals {
   dailyAverageCalories?: number;
   programWeightKg?: number;
   lastTdeeUpdate?: string;
+  /** Weight-loss goal program (users/{uid}/goal/{year}); kg to match other weight fields. */
+  goalWeightKg?: number;
+  currentWeightKg?: number;
+  startWeightKg?: number;
+  initialTrendWeightKg?: number;
+  /** Raw rate from the goal doc (`r`); ~% bodyweight/week. */
+  goalRate?: number;
+  /** Raw direction code (`g`) and type code (`t`) from the goal doc. */
+  goalDirection?: string;
+  goalType?: string;
+  /** current − goal weight (kg); positive = still to lose. */
+  kgToGoal?: number;
+  /** Energy-balance weekly change (kg); positive = losing. */
+  estWeeklyLossKg?: number;
+  etaWeeks?: number;
+  etaDate?: string;
 }
 
 export interface UserProfile {

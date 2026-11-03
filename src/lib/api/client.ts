@@ -467,6 +467,50 @@ export class MacroFactorClient {
     const day = Object.values(days)[0];
     const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
     const num = (v: unknown) => (v != null && v !== '' ? Number(v) : undefined);
+
+    // Weight-loss goal program (users/{uid}/goal/{year}) — NOT stored in the planner doc.
+    const goal = await this.getWeightGoal();
+    const tdeeVal = num(planner.tdeeValue);
+    // planner.weight / dailyAverage are often null between TDEE updates — fall back robustly.
+    const calArr = toNumberArray(planner.calories ?? []);
+    const intakeVal =
+      num(planner.dailyAverage) ??
+      (calArr.length ? Math.round(calArr.reduce((a, b) => a + b, 0) / calArr.length) : undefined);
+    let currentWeightKg = num(planner.weight);
+    if (currentWeightKg == null) {
+      try {
+        const end = fmtDate(new Date());
+        const start = fmtDate(new Date(Date.now() - 45 * 864e5));
+        const recent = await this.getWeightEntries(start, end);
+        currentWeightKg = recent.length ? recent[recent.length - 1].weight : undefined;
+      } catch {
+        /* leave undefined — ETA just won't be computed */
+      }
+    }
+    const goalWeightKg = goal ? num(goal.w) : undefined;
+    // Energy-balance weekly change: (TDEE − intake) × 7 / 7700 kcal-per-kg; positive = losing.
+    const estWeeklyLossKg =
+      tdeeVal != null && intakeVal != null
+        ? Math.round(((tdeeVal - intakeVal) * 7) / 7700 * 1000) / 1000
+        : undefined;
+    const kgToGoal =
+      currentWeightKg != null && goalWeightKg != null
+        ? Math.round((currentWeightKg - goalWeightKg) * 100) / 100
+        : undefined;
+    let etaWeeks: number | undefined;
+    let etaDate: string | undefined;
+    if (
+      kgToGoal != null &&
+      estWeeklyLossKg &&
+      estWeeklyLossKg !== 0 &&
+      Math.sign(kgToGoal) === Math.sign(estWeeklyLossKg)
+    ) {
+      etaWeeks = Math.round((kgToGoal / estWeeklyLossKg) * 10) / 10;
+      const d = new Date();
+      d.setDate(d.getDate() + Math.round(etaWeeks * 7));
+      etaDate = fmtDate(d);
+    }
+
     return {
       calories: toNumberArray(planner.calories ?? []),
       protein: toNumberArray(planner.protein ?? []),
@@ -485,7 +529,40 @@ export class MacroFactorClient {
       dailyAverageCalories: num(planner.dailyAverage),
       programWeightKg: num(planner.weight),
       lastTdeeUpdate: str(planner.timeOfLastTdeeUpdate),
+      goalWeightKg,
+      currentWeightKg,
+      startWeightKg: goal ? num(goal.ws) : undefined,
+      initialTrendWeightKg: goal ? num(goal.it) : undefined,
+      goalRate: goal ? num(goal.r) : undefined,
+      goalDirection: goal ? str(goal.g) : undefined,
+      goalType: goal ? str(goal.t) : undefined,
+      kgToGoal,
+      estWeeklyLossKg,
+      etaWeeks,
+      etaDate,
     };
+  }
+
+  /**
+   * Current weight-loss goal program from users/{uid}/goal/{year}.
+   * The doc is keyed by MMDD; we take the most recent entry (falling back to last year).
+   * Fields: w=goal weight (kg), ws=start weight (kg), it=initial trend (kg),
+   * r=rate, g=direction code, t=type code. MacroFactor stores no goal in the planner doc,
+   * so this is the only source of the target weight / rate.
+   */
+  async getWeightGoal(): Promise<Record<string, any> | null> {
+    // eslint-disable-line @typescript-eslint/no-explicit-any
+    const token = await this.ensureToken();
+    const thisYear = new Date().getFullYear();
+    for (const y of [thisYear, thisYear - 1]) {
+      const data = parseDocument(await getDocument(`users/${this.uid}/goal/${y}`, token));
+      const keys = Object.keys(data).filter((k) => /^\d{4}$/.test(k));
+      if (keys.length === 0) continue;
+      keys.sort(); // MMDD sorts chronologically within a year
+      const latest = data[keys[keys.length - 1]];
+      if (latest && typeof latest === 'object') return latest as Record<string, any>;
+    }
+    return null;
   }
 
   // -------------------------------------------------------------------------

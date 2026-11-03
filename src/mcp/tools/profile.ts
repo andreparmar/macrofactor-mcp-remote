@@ -101,7 +101,7 @@ export function registerProfileTools(server: McpServer, client: MacroFactorClien
 
   server.tool(
     'get_goals',
-    `Retrieve the user's full MacroFactor nutrition program: per-day calorie + macro targets (protein/carbs/fat), TDEE and its mode (dynamic/manual), protein-per-kg, carb %, program style/type, protein preference, calorie floor, and daily-average calories. Note: MacroFactor sets NO micronutrient goals — use get_micronutrients for intake vs general DRI targets.`,
+    `Retrieve the user's full MacroFactor program: per-day calorie + macro targets (protein/carbs/fat), TDEE and its mode (dynamic/manual), protein-per-kg, carb %, program style/type, protein preference, calorie floor, daily-average calories, AND the weight-loss goal program (goal weight, start weight, rate, kg-to-goal, and an estimated ETA from energy balance). Weights are in kg. Note: MacroFactor sets NO micronutrient goals — use get_micronutrients for intake vs general DRI targets.`,
     {},
     { readOnlyHint: true },
     async () => {
